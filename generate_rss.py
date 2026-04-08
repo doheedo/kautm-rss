@@ -77,27 +77,25 @@ def fetch_jobs():
     soup = BeautifulSoup(resp.text, "html.parser")
     jobs = []
 
-    rows = soup.select("table tbody tr")
-    for row in rows:
-        title_td = row.select_one("td.title")
-        if not title_td:
-            continue
+    # tbody 없이 tr 직접 탐색
+    rows = soup.select("tr")
+    print(f"[DEBUG] 총 tr 개수: {len(rows)}")
 
-        a_tag = title_td.select_one("a")
+    for row in rows:
+        a_tag = row.select_one("td.title a")
         if not a_tag:
             continue
 
         title = a_tag.get_text(strip=True)
         href = a_tag.get("href", "")
-        link = normalize_link(href)
+        link = BASE_URL + href if href.startswith("/") else href
 
         tds = row.select("td")
         org = tds[2].get_text(strip=True) if len(tds) > 2 else ""
         date_str = tds[3].get_text(strip=True) if len(tds) > 3 else ""
-        views = tds[4].get_text(strip=True) if len(tds) > 4 else ""
         deadline_str = tds[5].get_text(strip=True) if len(tds) > 5 else ""
 
-        uid = make_guid(link)
+        uid = hashlib.md5(link.encode()).hexdigest()
 
         jobs.append({
             "uid": uid,
@@ -106,8 +104,6 @@ def fetch_jobs():
             "org": org,
             "date": date_str,
             "deadline": deadline_str,
-            "views": views,
-            "pub_date": parse_date(date_str),
         })
 
     return jobs
