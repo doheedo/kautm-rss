@@ -1,41 +1,5 @@
-name: KAUTM 채용공고 RSS 업데이트
-
-on:
-  schedule:
-    - cron: "0 0,4,9 * * *"
-  workflow_dispatch:
-
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
-permissions:
-  contents: write
-
-jobs:
-  update-rss:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: 저장소 체크아웃
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Python 설정
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: 의존성 설치
-        run: pip install requests beautifulsoup4
-
-      - name: RSS 생성 스크립트 실행
-        run: python generate_rss.py
-
-      - name: 변경사항 커밋 & 푸시
+- name: 의존성 설치
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add rss.xml state.json
-          git diff --cached --quiet || git commit -m "chore: RSS 업데이트 $(date +'%Y-%m-%d %H:%M KST')"
-          git push
+          pip install playwright
+          playwright install chromium
+          playwright install-deps chromium
