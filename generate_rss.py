@@ -1,5 +1,4 @@
-import requests
-from bs4 import BeautifulSoup
+from playwright.sync_api import sync_playwright
 from datetime import datetime, timezone
 import json
 import os
@@ -12,66 +11,53 @@ LIST_URL = f"{BASE_URL}/bbs/?so_table=tlo_news&category=recruit"
 RSS_FILE = "rss.xml"
 STATE_FILE = "state.json"
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-    "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
-    "Accept-Encoding": "gzip, deflate",
-    "Connection": "keep-alive",
-    "Upgrade-Insecure-Requests": "1",
-    "Cache-Control": "max-age=0",
-}
-
 
 def fetch_jobs():
-    try:
-        resp = requests.get(LIST_URL, headers=HEADERS, timeout=15)
-        resp.raise_for_status()
-        resp.encoding = "utf-8"
-    except Exception as e:
-        print(f"[ERROR] 페이지 요청 실패: {e}")
-        return []
-
-    soup = BeautifulSoup(resp.text, "html.parser")
-
-    # 페이지 받아왔는지 확인
-    print(f"[DEBUG] 페이지 길이: {len(resp.text)}")
-    print(f"[DEBUG] 봇차단 여부: {'자동등록방지' in resp.text}")
-
     jobs = []
-    # td.title 을 직접 찾아서 부모 tr 탐색
-    for title_td in soup.select("td.title"):
-        a_tag = title_td.select_one("a")
-        if not a_tag:
-            continue
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        )
+        page.goto(LIST_URL, wait_until="networkidle", timeout=30000)
+        html = page.content()
+        print(f"[DEBUG] 페이지 길이: {len(html)}")
+        print(f"[DEBUG] 봇차단 여부: {'자동등록방지' in html}")
 
-        # span.board-subject 에서 제목 추출
-        subject = a_tag.select_one("span.board-subject")
-        title = subject.get_text(strip=True) if subject else a_tag.get_text(strip=True)
+        rows = page.query_selector_all("td.title")
+        print(f"[DEBUG] 공고 td 개수: {len(rows)}")
 
-        href = a_tag.get("href", "")
-        link = BASE_URL + href if href.startswith("/") else href
+        for title_td in rows:
+            a_tag = title_td.query_selector("a")
+            if not a_tag:
+                continue
 
-        # 부모 tr의 모든 td
-        row = title_td.parent
-        tds = row.select("td")
+            subject = a_tag.query_selector("span.board-subject")
+            title = subject.inner_text().strip() if subject else a_tag.inner_text().strip()
 
-        org = tds[2].get_text(strip=True) if len(tds) > 2 else ""
-        date_str = tds[3].get_text(strip=True) if len(tds) > 3 else ""
-        deadline_str = tds[5].get_text(strip=True) if len(tds) > 5 else ""
+            href = a_tag.get_attribute("href") or ""
+            link = BASE_URL + href if href.startswith("/") else href
 
-        uid = hashlib.md5(link.encode()).hexdigest()
+            row = title_td.evaluate_handle("el => el.parentElement")
+            tds = row.query_selector_all("td")
 
-        print(f"[DEBUG] 공고 발견: {title}")
-        jobs.append({
-            "uid": uid,
-            "title": title,
-            "link": link,
-            "org": org,
-            "date": date_str,
-            "deadline": deadline_str,
-        })
+            org = tds[2].inner_text().strip() if len(tds) > 2 else ""
+            date_str = tds[3].inner_text().strip() if len(tds) > 3 else ""
+            deadline_str = tds[5].inner_text().strip() if len(tds) > 5 else ""
 
+            uid = hashlib.md5(link.encode()).hexdigest()
+            print(f"[DEBUG] 공고 발견: {title}")
+
+            jobs.append({
+                "uid": uid,
+                "title": title,
+                "link": link,
+                "org": org,
+                "date": date_str,
+                "deadline": deadline_str,
+            })
+
+        browser.close()
     return jobs
 
 
