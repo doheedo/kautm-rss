@@ -1,0 +1,40 @@
+name: KAUTM 채용공고 RSS 업데이트
+
+on:
+  schedule:
+    # 매일 오전 9시, 오후 1시, 오후 6시 (KST = UTC+9)
+    - cron: "0 0,4,9 * * *"
+  workflow_dispatch: # 수동 실행 가능
+
+permissions:
+  contents: write  # 파일 커밋을 위해 필요
+
+jobs:
+  update-rss:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 저장소 체크아웃
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Python 설정
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 의존성 설치
+        run: pip install requests beautifulsoup4
+
+      - name: RSS 생성 스크립트 실행
+        run: python generate_rss.py
+
+      - name: 변경사항 커밋 & 푸시
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add rss.xml state.json
+          # 변경사항이 있을 때만 커밋
+          git diff --cached --quiet || git commit -m "chore: RSS 업데이트 $(date +'%Y-%m-%d %H:%M KST')"
+          git push
