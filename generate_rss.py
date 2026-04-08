@@ -4,7 +4,6 @@ from datetime import datetime, timezone
 import json
 import os
 import hashlib
-from urllib.parse import urljoin, urlparse, parse_qsl, urlencode, urlunparse
 from xml.etree.ElementTree import Element, SubElement, ElementTree
 import xml.etree.ElementTree as ET
 
@@ -23,49 +22,8 @@ HEADERS = {
     "Cache-Control": "max-age=0",
 }
 
-ALLOWED_QUERY_PARAMS = {"so_table", "mode", "num", "category"}
-
-
-def normalize_link(raw_link):
-    url = urljoin(BASE_URL, raw_link)
-    parsed = urlparse(url)
-    params = dict(parse_qsl(parsed.query, keep_blank_values=True))
-    normalized = {
-        "so_table": "tlo_news",
-        "mode": "VIEW",
-        "category": "recruit",
-    }
-    if "num" in params:
-        normalized["num"] = params["num"]
-    query = urlencode(normalized)
-    return urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", query, ""))
-
-
-def make_guid(link):
-    parsed = urlparse(link)
-    params = dict(parse_qsl(parsed.query, keep_blank_values=True))
-    num = params.get("num")
-    if num:
-        return f"kautm-recruit-{num}"
-    return hashlib.md5(link.encode("utf-8")).hexdigest()
-
-
-def parse_date(date_str):
-    date_str = date_str.strip()
-    fmt_variants = ("%Y-%m-%d", "%Y.%m.%d", "%Y/%m/%d", "%y-%m-%d")
-    for fmt in fmt_variants:
-        try:
-            dt = datetime.strptime(date_str, fmt)
-            return dt.replace(tzinfo=timezone.utc).strftime(
-                "%a, %d %b %Y %H:%M:%S +0000"
-            )
-        except ValueError:
-            continue
-    return datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S +0000")
-
 
 def fetch_jobs():
-    """채용공고 목록 스크래핑"""
     try:
         resp = requests.get(LIST_URL, headers=HEADERS, timeout=15)
         resp.raise_for_status()
@@ -75,28 +33,36 @@ def fetch_jobs():
         return []
 
     soup = BeautifulSoup(resp.text, "html.parser")
+
+    # 페이지 받아왔는지 확인
+    print(f"[DEBUG] 페이지 길이: {len(resp.text)}")
+    print(f"[DEBUG] 봇차단 여부: {'자동등록방지' in resp.text}")
+
     jobs = []
-
-    # tbody 없이 tr 직접 탐색
-    rows = soup.select("tr")
-    print(f"[DEBUG] 총 tr 개수: {len(rows)}")
-
-    for row in rows:
-        a_tag = row.select_one("td.title a")
+    # td.title 을 직접 찾아서 부모 tr 탐색
+    for title_td in soup.select("td.title"):
+        a_tag = title_td.select_one("a")
         if not a_tag:
             continue
 
-        title = a_tag.get_text(strip=True)
+        # span.board-subject 에서 제목 추출
+        subject = a_tag.select_one("span.board-subject")
+        title = subject.get_text(strip=True) if subject else a_tag.get_text(strip=True)
+
         href = a_tag.get("href", "")
         link = BASE_URL + href if href.startswith("/") else href
 
+        # 부모 tr의 모든 td
+        row = title_td.parent
         tds = row.select("td")
+
         org = tds[2].get_text(strip=True) if len(tds) > 2 else ""
         date_str = tds[3].get_text(strip=True) if len(tds) > 3 else ""
         deadline_str = tds[5].get_text(strip=True) if len(tds) > 5 else ""
 
         uid = hashlib.md5(link.encode()).hexdigest()
 
+        print(f"[DEBUG] 공고 발견: {title}")
         jobs.append({
             "uid": uid,
             "title": title,
@@ -122,7 +88,6 @@ def save_state(state):
 
 
 def build_rss(items):
-    """RSS 2.0 XML 생성"""
     rss = Element("rss", version="2.0")
     channel = SubElement(rss, "channel")
 
@@ -138,15 +103,13 @@ def build_rss(items):
         entry = SubElement(channel, "item")
         SubElement(entry, "title").text = item["title"]
         SubElement(entry, "link").text = item["link"]
-        description = (
-            f"기관: {item['org']} / 등록일: {item['date']} / "
-            f"마감일: {item['deadline']} / 조회수: {item['views']}"
+        desc = f"기관: {item['org']} | 등록일: {item['date']} | 마감일: {item['deadline']}"
+        SubElement(entry, "description").text = desc
+        SubElement(entry, "guid", isPermaLink="true").text = item["link"]
+        SubElement(entry, "pubDate").text = item.get(
+            "pub_date",
+            datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S +0000"),
         )
-        SubElement(entry, "description").text = description
-        guid_el = SubElement(entry, "guid")
-        guid_el.set("isPermaLink", "false")
-        guid_el.text = item["uid"]
-        SubElement(entry, "pubDate").text = item.get("pub_date")
 
     tree = ElementTree(rss)
     ET.indent(tree, space="  ")
@@ -169,6 +132,9 @@ def main():
     new_jobs = []
     for job in jobs:
         if job["uid"] not in seen_ids:
+            job["pub_date"] = datetime.now(timezone.utc).strftime(
+                "%a, %d %b %Y %H:%M:%S +0000"
+            )
             new_jobs.append(job)
             seen_ids.add(job["uid"])
             print(f"  [NEW] {job['title']}")
@@ -177,7 +143,6 @@ def main():
     all_items = all_items[:100]
 
     build_rss(all_items)
-
     save_state({"seen_ids": list(seen_ids), "items": all_items})
     print(f"[*] 완료. 신규 공고: {len(new_jobs)}개")
 
